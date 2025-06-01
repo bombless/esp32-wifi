@@ -22,6 +22,7 @@
 #include "esp_tls.h"
 #include "esp_http_client.h"
 #include "esp_crt_bundle.h"
+#include "esp_http_server.h"
 
 /* The examples use WiFi configuration that you can set via project configuration menu
 
@@ -162,6 +163,73 @@ void https_request()
     esp_http_client_cleanup(client);
 }
 
+/* 简单的请求处理函数 */
+static esp_err_t root_get_handler(httpd_req_t *req)
+{
+    const char* resp_str = "Hello from ESP32!";
+    httpd_resp_send(req, resp_str, strlen(resp_str));
+    return ESP_OK;
+}
+
+/* 带参数的请求处理 */
+static esp_err_t echo_get_handler(httpd_req_t *req)
+{
+    char buffer[100];
+    
+    /* 从URL查询字符串获取参数 */
+    if (httpd_req_get_url_query_str(req, buffer, sizeof(buffer)) == ESP_OK) {
+        ESP_LOGI(TAG, "Found URL query => %s", buffer);
+        
+        char param[32];
+        /* 获取指定参数值 */
+        if (httpd_query_key_value(buffer, "name", param, sizeof(param)) == ESP_OK) {
+            ESP_LOGI(TAG, "Found URL parameter => name=%s", param);
+            
+            char response[100];
+            snprintf(response, sizeof(response), "Hello, %s!", param);
+            httpd_resp_send(req, response, strlen(response));
+            return ESP_OK;
+        }
+    }
+    
+    httpd_resp_send(req, "Please provide name parameter", HTTPD_RESP_USE_STRLEN);
+    return ESP_OK;
+}
+
+/* 定义URI处理结构 */
+static const httpd_uri_t root = {
+    .uri       = "/",
+    .method    = HTTP_GET,
+    .handler   = root_get_handler,
+    .user_ctx  = NULL
+};
+
+static const httpd_uri_t echo = {
+    .uri       = "/echo",
+    .method    = HTTP_GET,
+    .handler   = echo_get_handler,
+    .user_ctx  = NULL
+};
+
+/* 启动HTTP服务器 */
+static httpd_handle_t start_webserver(void)
+{
+    httpd_config_t config = HTTPD_DEFAULT_CONFIG();
+    config.lru_purge_enable = true; // 在内存不足时清理闲置连接
+    
+    httpd_handle_t server = NULL;
+    if (httpd_start(&server, &config) == ESP_OK) {
+        // 注册URI处理程序
+        httpd_register_uri_handler(server, &root);
+        httpd_register_uri_handler(server, &echo);
+        ESP_LOGI(TAG, "HTTP server started");
+        return server;
+    }
+    
+    ESP_LOGI(TAG, "Error starting server!");
+    return NULL;
+}
+
 void wifi_init_sta(void)
 {
     s_wifi_event_group = xEventGroupCreate();
@@ -222,6 +290,7 @@ void wifi_init_sta(void)
         ESP_LOGI(TAG, "connected to ap SSID:%s password:%s",
                  EXAMPLE_ESP_WIFI_SSID, EXAMPLE_ESP_WIFI_PASS);
         https_request();
+        start_webserver();
     } else if (bits & WIFI_FAIL_BIT) {
         ESP_LOGI(TAG, "Failed to connect to SSID:%s, password:%s",
                  EXAMPLE_ESP_WIFI_SSID, EXAMPLE_ESP_WIFI_PASS);
