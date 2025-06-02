@@ -24,6 +24,8 @@
 #include "esp_crt_bundle.h"
 #include "esp_http_server.h"
 
+#include <locale.h>
+
 /* The examples use WiFi configuration that you can set via project configuration menu
 
    If you'd rather not, just change the below entries to strings with
@@ -413,7 +415,32 @@ void http_get_temperature(void* param)
     esp_http_client_cleanup(client);
     vTaskDelete(NULL);
 }
-
+#include "cursor.h"
+#include <wchar.h>
+void utf8_to_utf16(const char *utf8, wchar_t *utf16_buf, size_t buf_size) {
+    while (*utf8 && buf_size > 1) {
+        wchar_t codepoint = 0;
+        // 解析 UTF-8 字节序列（省略错误检查）
+        if ((*utf8 & 0x80) == 0) {
+            codepoint = *utf8++;
+        } else if ((*utf8 & 0xE0) == 0xC0) {
+            codepoint = (*utf8++ & 0x1F) << 6;
+            codepoint |= (*utf8++ & 0x3F);
+        } else if ((*utf8 & 0xF0) == 0xE0) {
+            codepoint = (*utf8++ & 0x0F) << 12;
+            codepoint |= (*utf8++ & 0x3F) << 6;
+            codepoint |= (*utf8++ & 0x3F);
+        } else if ((*utf8 & 0xF8) == 0xF0) {
+            codepoint = (*utf8++ & 0x07) << 18;
+            codepoint |= (*utf8++ & 0x3F) << 12;
+            codepoint |= (*utf8++ & 0x3F) << 6;
+            codepoint |= (*utf8++ & 0x3F);
+        }
+        *utf16_buf++ = codepoint;
+        buf_size--;
+    }
+    *utf16_buf = 0; // NULL 终止
+}
 void app_main(void)
 {
     //Initialize NVS
@@ -426,4 +453,55 @@ void app_main(void)
 
     ESP_LOGI(TAG, "ESP_WIFI_MODE_STA");
     wifi_init_sta();
+    void i2c_master_init(void);
+    i2c_master_init();
+
+    // setlocale(LC_ALL, "en_US.UTF-8");
+    // iconv_t cd = iconv_open("UTF-16LE", "UTF-8");
+
+    for (;;) {
+        struct cursor c = cursor_create();
+        int count = 0;
+        void ssd1315_clear_buffer(void);
+        ssd1315_clear_buffer();
+        for (int i = 0; i < 3; i++) {
+            struct cursor draw_text(wchar_t *text, struct cursor cursor);
+            if (weather_info[i].temperature == 0) {
+                continue;
+            }
+            count++;
+            wchar_t wbuf[10] = {0};
+            char buf[10] = {0};
+            size_t in_len = 10;
+            size_t out_len = 10;
+            // size_t converted = mbstowcs(wbuf, weather_info[i].city, 10);
+            // if (iconv(cd, &buf, &in_len, &wbuf, &out_len) == (size_t)-1) {
+            //     printf("iconv failed: %s\n", strerror(errno));
+            // }
+            utf8_to_utf16(weather_info[i].city, wbuf, 10);
+            // ESP_LOGI(TAG, "转换后的宽字符长度: %zu", converted);
+            ESP_LOGI(TAG, "LINE %d", __LINE__);
+            ESP_LOGI(TAG, "wbuf长度: %d", wcslen(wbuf));
+            c = draw_text(wbuf, c);
+            cursor_next(&c);
+            snprintf(buf, 10, "%d", weather_info[i].temperature);
+            int i = 0;
+            for (; buf[i]; i += 1) {
+                wbuf[i] = (wchar_t)buf[i];
+            }
+            wbuf[i] = L'\0'; // 确保字符串以null结尾
+            ESP_LOGI(TAG, "LINE %d", __LINE__);
+            c = draw_text(wbuf, c);
+            ESP_LOGI(TAG, "LINE %d", __LINE__);
+            c = draw_text(L"°C", c);
+            cursor_new_line(&c);
+            void ssd1315_refresh_display(void);
+            ssd1315_refresh_display();
+        }
+        if (count == 3) {
+            // iconv_close(cd);
+            return;
+        }
+    }
+
 }
