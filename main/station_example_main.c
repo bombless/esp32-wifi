@@ -336,10 +336,9 @@ int extract_temperature(const char *response) {
 }
 
 // 用于存储HTTP响应数据的缓冲区
-#define MAX_HTTP_RECV_BUFFER 4096
-static char response_data[3][MAX_HTTP_RECV_BUFFER];
-static int response_len[3] = {0};
 #define MAX_HTTP_OUTPUT_BUFFER 512
+static char response_data[3][MAX_HTTP_OUTPUT_BUFFER];
+static int response_len[3] = {0};
 esp_err_t _http_event_handler_short(esp_http_client_event_t *evt)
 {
     int index = (int)evt->user_data; // 获取用户数据指针
@@ -375,7 +374,7 @@ void http_get_temperature(void* param)
     esp_http_client_config_t config = {
         .url = weather_info[index].url,
         .event_handler = _http_event_handler_short,
-        .buffer_size = MAX_HTTP_RECV_BUFFER,
+        .buffer_size = MAX_HTTP_OUTPUT_BUFFER,
         .crt_bundle_attach = esp_crt_bundle_attach, // 关键配置
         .timeout_ms = 10000,       // 延长超时
         .user_data = (void*)index, // 将响应数据缓冲区传递给用户数据
@@ -396,10 +395,10 @@ void http_get_temperature(void* param)
         //         esp_http_client_get_content_length(client));
         
         // 确保响应以null结尾
-        if (response_len[index] < MAX_HTTP_RECV_BUFFER) {
+        if (response_len[index] < MAX_HTTP_OUTPUT_BUFFER) {
             response_data[index][response_len[index]] = '\0';
         } else {
-            response_data[index][MAX_HTTP_RECV_BUFFER - 1] = '\0';
+            response_data[index][MAX_HTTP_OUTPUT_BUFFER - 1] = '\0';
         }
         // ESP_LOGI(TAG, "城市: %s 下标: %d 地址：%p 数据: %s", weather_info[index].city, index, response_data[index], response_data[index]);
         // 提取温度数据
