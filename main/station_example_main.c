@@ -346,9 +346,10 @@ esp_err_t _http_event_handler_short(esp_http_client_event_t *evt)
     switch (evt->event_id) {
         case HTTP_EVENT_ON_DATA:
             // 只处理数据事件，并且只在缓冲区有空间时复制数据
-            if (response_len[index] + evt->data_len < MAX_HTTP_OUTPUT_BUFFER) {
-                memcpy(response_data[index] + response_len[index], evt->data, evt->data_len);
-                response_len[index] += evt->data_len;
+            if (response_len[index] < MAX_HTTP_OUTPUT_BUFFER - 1) {
+                int copy_len = evt->data_len > MAX_HTTP_OUTPUT_BUFFER - response_len[index] ? MAX_HTTP_OUTPUT_BUFFER - response_len[index] : evt->data_len;
+                memcpy(response_data[index] + response_len[index], evt->data, copy_len);
+                response_len[index] += copy_len;
             }
             break;
         default:
