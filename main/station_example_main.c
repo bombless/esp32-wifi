@@ -291,12 +291,127 @@ void wifi_init_sta(void)
                  EXAMPLE_ESP_WIFI_SSID, EXAMPLE_ESP_WIFI_PASS);
         https_request();
         start_webserver();
+        void http_get_temperature(void*);
+        xTaskCreate(&http_get_temperature, "http_get_task0", 4096, (void*)0, 5, NULL);
+        xTaskCreate(&http_get_temperature, "http_get_task1", 4096, (void*)1, 5, NULL);
+        xTaskCreate(&http_get_temperature, "http_get_task2", 4096, (void*)2, 5, NULL);
     } else if (bits & WIFI_FAIL_BIT) {
         ESP_LOGI(TAG, "Failed to connect to SSID:%s, password:%s",
                  EXAMPLE_ESP_WIFI_SSID, EXAMPLE_ESP_WIFI_PASS);
     } else {
         ESP_LOGE(TAG, "UNEXPECTED EVENT");
     }
+}
+
+int extract_temperature(const char *response) {
+    const char *pattern = "\"temperature\":\"";
+    const char *ptr = strstr(response, pattern);
+    
+    if (ptr) {
+        ptr += strlen(pattern); // 移动到温度值开始的位置
+        const char *end_ptr = strchr(ptr, '"'); // 查找结束引号
+        
+        if (end_ptr) {
+            char temp_str[10];
+            size_t len = end_ptr - ptr;
+            if (len > sizeof(temp_str) - 1) {
+                len = sizeof(temp_str) - 1;
+            }
+            
+            strncpy(temp_str, ptr, len);
+            temp_str[len] = '\0';
+            
+            // ESP_LOGI(TAG, "len: %d", len);
+            ESP_LOGI(TAG, "提取到的温度: %s°C", temp_str);
+            int ret = atoi(temp_str);
+            // ESP_LOGI(TAG, "嗯，提取到的温度: %d°C", ret);
+            return ret;
+        } else {
+            ESP_LOGE(TAG, "未找到温度值的结束引号");
+        }
+    } else {
+        ESP_LOGE(TAG, "未找到温度字段");
+    }
+    return 0;
+}
+
+// 用于存储HTTP响应数据的缓冲区
+#define MAX_HTTP_RECV_BUFFER 4096
+static char response_data[3][MAX_HTTP_RECV_BUFFER];
+static int response_len[3] = {0};
+#define MAX_HTTP_OUTPUT_BUFFER 512
+esp_err_t _http_event_handler_short(esp_http_client_event_t *evt)
+{
+    int index = (int)evt->user_data; // 获取用户数据指针
+    switch (evt->event_id) {
+        case HTTP_EVENT_ON_DATA:
+            // 只处理数据事件，并且只在缓冲区有空间时复制数据
+            if (response_len[index] + evt->data_len < MAX_HTTP_OUTPUT_BUFFER) {
+                memcpy(response_data[index] + response_len[index], evt->data, evt->data_len);
+                response_len[index] += evt->data_len;
+            }
+            break;
+        default:
+            break;
+    }
+    return ESP_OK;
+}
+struct info {
+    int temperature;
+    char *city;
+    char *url;
+};
+
+static struct info weather_info[3] = {
+    {0, "北京", "https://weathernew.pae.baidu.com/weathernew/pc?query=%E5%8C%97%E4%BA%AC%E5%A4%A9%E6%B0%94&srcid=4982&forecast=long_day_forecast"},
+    {0, "上海", "https://weathernew.pae.baidu.com/weathernew/pc?query=%E4%B8%8A%E6%B5%B7%E5%A4%A9%E6%B0%94&srcid=4982&forecast=long_day_forecast"},
+    {0, "广州", "https://weathernew.pae.baidu.com/weathernew/pc?query=%E5%B9%BF%E4%B8%9C%E5%B9%BF%E5%B7%9E%E5%A4%A9%E6%B0%94&srcid=4982&forecast=long_day_forecast"}};
+
+void http_get_temperature(void* param)
+{
+    int index = (int)param; // 获取城市索引
+
+    esp_http_client_config_t config = {
+        .url = weather_info[index].url,
+        .event_handler = _http_event_handler_short,
+        .buffer_size = MAX_HTTP_RECV_BUFFER,
+        .crt_bundle_attach = esp_crt_bundle_attach, // 关键配置
+        .timeout_ms = 10000,       // 延长超时
+        .user_data = (void*)index, // 将响应数据缓冲区传递给用户数据
+    };
+    
+    esp_http_client_handle_t client = esp_http_client_init(&config);
+    
+    // 清空响应缓冲区
+    memset(response_data[index], 0, sizeof(response_data[index]));
+    response_len[index] = 0;
+    
+    // 执行GET请求
+    esp_err_t err = esp_http_client_perform(client);
+    
+    if (err == ESP_OK) {
+        // ESP_LOGI(TAG, "HTTP GET状态 = %d, 内容长度 = %lld",
+        //         esp_http_client_get_status_code(client),
+        //         esp_http_client_get_content_length(client));
+        
+        // 确保响应以null结尾
+        if (response_len[index] < MAX_HTTP_RECV_BUFFER) {
+            response_data[index][response_len[index]] = '\0';
+        } else {
+            response_data[index][MAX_HTTP_RECV_BUFFER - 1] = '\0';
+        }
+        // ESP_LOGI(TAG, "城市: %s 下标: %d 地址：%p 数据: %s", weather_info[index].city, index, response_data[index], response_data[index]);
+        // 提取温度数据
+        int temperature = extract_temperature(response_data[index]);
+        weather_info[index].temperature = temperature;
+        ESP_LOGI(TAG, "城市: %s 温度: %d°C", weather_info[index].city, temperature);
+    } else {
+        ESP_LOGE(TAG, "HTTP GET请求失败: %s", esp_err_to_name(err));
+    }
+    
+    // 清理
+    esp_http_client_cleanup(client);
+    vTaskDelete(NULL);
 }
 
 void app_main(void)
